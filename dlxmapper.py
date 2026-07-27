@@ -15,19 +15,76 @@ st.set_page_config(
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
+# Initialize mode in session state if not present
+if "mode" not in st.session_state:
+    st.session_state.mode = "Demand Letter with Transmittal"  # default
+
 # App Header Styling with Reset Button
 col_header, col_reset = st.columns([4, 1])
 with col_header:
     st.title("🎯 DLX Mapper")
 with col_reset:
     st.write("") 
-    # FIXED: Replaced width="stretch" with use_container_width=True
     if st.button("🔄 Reset App", use_container_width=True, type="secondary"):
         st.session_state.uploader_key += 1
         st.rerun()
 
 st.write("---")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# =========================================================
+# STEP 0: MODE SELECTION (Demand Letter vs Transmittal Only)
+# =========================================================
+st.subheader("📌 Select Output Type")
+
+# Two buttons for mode selection
+col_mode1, col_mode2 = st.columns(2)
+with col_mode1:
+    if st.button(
+        "📄 Demand Letter",
+        use_container_width=True,
+        type="primary" if st.session_state.mode == "Demand Letter with Transmittal" else "secondary"
+    ):
+        st.session_state.mode = "Demand Letter with Transmittal"
+        st.rerun()
+with col_mode2:
+    if st.button(
+        "📨 Transmittal Only",
+        use_container_width=True,
+        type="primary" if st.session_state.mode == "Transmittal Only" else "secondary"
+    ):
+        st.session_state.mode = "Transmittal Only"
+        st.rerun()
+
+# Define campaign lists per mode
+demand_letter_campaigns = [
+    "CBS HOUSING LOAN",
+    "PIF FORECLOSURE",
+    "PIF HOME LOAN"
+]
+
+transmittal_only_campaigns = [
+    "SBC HOME LOAN",
+    "BPI",
+    "BPI BANKO",
+    "BPI CARDS EARLY",
+    "BPI CARDS 30DPD",
+    "BPI CARDS XDAYS",
+    "BPI PL XDAYS",
+    "BPI PL 30DPD",
+    "BPI PL 60DPD",
+    "BPI RBANK CARDS 30DPD",
+    "BPI RBANK CARDS 60DPD",
+    "ROBINSONS BPI"
+]
+
+# Choose the appropriate campaign list based on current mode
+if st.session_state.mode == "Demand Letter with Transmittal":
+    client_name_options = demand_letter_campaigns
+else:
+    client_name_options = transmittal_only_campaigns
+
+st.write("---")
 
 # 1. STEP 1: Configuration Control Panel (Moved to top)
 st.subheader("⚙️ Select Section")
@@ -36,15 +93,6 @@ with st.container(border=True):
     col1, col2 = st.columns(2, gap="large")
     
     with col1:
-        client_name_options = [
-            "PIF HOME LOAN",
-            "PIF FORECLOSURE",
-            "SBC HOME LOAN",
-            "SBF HOME LOAN",
-            "CBS HOUSING LOAN",
-            "BDO HOME LOAN COLLECT",
-            "UBP HOMELOAN MORTGAGE"
-        ]
         selected_client_name = st.selectbox(
             "👤 Select Campaign:", 
             client_name_options,
@@ -52,14 +100,19 @@ with st.container(border=True):
         )
         
     with col2:
-        client_dir = os.path.join(SCRIPT_DIR, selected_client_name)
-        template_options = []
+        # Determine the folder to look for templates based on mode
+        if st.session_state.mode == "Transmittal Only":
+            # Use a fixed "Transmittal" folder – place your transmittal template(s) here
+            client_dir = os.path.join(SCRIPT_DIR, "Transmittal")
+        else:
+            # Use campaign-specific folder
+            client_dir = os.path.join(SCRIPT_DIR, selected_client_name)
         
+        template_options = []
         if os.path.exists(client_dir) and os.path.isdir(client_dir):
             for file in os.listdir(client_dir):
                 if file.endswith('.xlsx') and not file.startswith('~$'):
                     template_options.append(os.path.splitext(file)[0])
-        
         template_options.sort()
         
         if not template_options:
@@ -75,14 +128,17 @@ with st.container(border=True):
 # DYNAMIC FILE PATH ROUTING & DIAGNOSTICS
 # =========================================================
 
-template_filename = os.path.join(SCRIPT_DIR, selected_client_name, f"{selected_template}.xlsx")
+# Build the full template path using the determined client_dir
+template_filename = os.path.join(client_dir, f"{selected_template}.xlsx")
 template_exists = os.path.exists(template_filename)
 
+# Lookup file logic (only for demand letter mode and specific campaigns)
 required_lookup_name = None
-if selected_client_name == "PIF HOME LOAN":
-    required_lookup_name = "pif FOR DLX.xlsx"
-elif selected_client_name == "PIF FORECLOSURE":
-    required_lookup_name = "pif fcl FOR DLX.xlsx"
+if st.session_state.mode == "Demand Letter with Transmittal":
+    if selected_client_name == "PIF HOME LOAN":
+        required_lookup_name = "pif FOR DLX.xlsx"
+    elif selected_client_name == "PIF FORECLOSURE":
+        required_lookup_name = "pif fcl FOR DLX.xlsx"
 
 if required_lookup_name:
     lookup_filename = os.path.join(SCRIPT_DIR, required_lookup_name)
@@ -100,7 +156,7 @@ with st.expander("🔍 System File Path Diagnostics", expanded=diagnostics_expan
     c_left, c_right = st.columns(2)
     with c_left:
         if template_exists:
-            st.success(f"📁 Template Found: `{selected_client_name}/{selected_template}.xlsx`")
+            st.success(f"📁 Template Found: `{os.path.basename(client_dir)}/{selected_template}.xlsx`")
         else:
             st.error(f"❌ Missing Template File: `{selected_template}.xlsx`")
             st.code(f"Required path: {template_filename}", language="bash")
@@ -113,7 +169,7 @@ with st.expander("🔍 System File Path Diagnostics", expanded=diagnostics_expan
                 st.warning(f"⚠️ Reference File `{required_lookup_name}` not found (Required for {selected_client_name})")
                 st.code(f"Required path: {lookup_filename}", language="bash")
         else:
-            st.info(f"ℹ️ No Reference Database required for `{selected_client_name}`.")
+            st.info(f"ℹ️ No Reference Database required for `{selected_client_name}` in this mode.")
 
 st.write("---")
 
@@ -254,60 +310,63 @@ if uploaded_file:
                 if "LEADS_ENDO_DATE" in df_target.columns:
                     df_target["LEADS_ENDO_DATE"] = pd.to_datetime(df_target["LEADS_ENDO_DATE"], errors='coerce').dt.strftime('%B %d, %Y').fillna("")
 
-                if required_lookup_name and lookup_exists and "AGENT_CODE" in df_source.columns:
-                    # Read AGENT sheet for AGENT_NAME lookup based on AGENT_CODE
-                    try:
-                        df_agent_lookup = pd.read_excel(lookup_filename, sheet_name="AGENT")
-                        df_agent_lookup.columns = df_agent_lookup.columns.astype(str).str.strip().str.upper()
-                        for col in df_agent_lookup.columns:
-                            if df_agent_lookup[col].dtype == 'object':
-                                df_agent_lookup[col] = df_agent_lookup[col].astype(str).str.strip()
-                        
-                        # Merge source AGENT_CODE with AGENT sheet to get AGENT_NAME
-                        temp_agent = df_source[["AGENT_CODE"]].copy()
-                        temp_agent["AGENT_CODE"] = temp_agent["AGENT_CODE"].fillna("").astype(str).str.strip()
-                        
-                        merged_agent = pd.merge(temp_agent, df_agent_lookup, on="AGENT_CODE", how="left")
-                        
-                        # Map AGENT_NAME and AGENT_CODE from the lookup
-                        if "AGENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
-                            df_target["AGENT_NAME"] = merged_agent["AGENT_NAME"]
-                        
-                        if "CLIENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
-                            df_target["CLIENT_NAME"] = merged_agent["AGENT_NAME"]
-                        
-                        if "AGENT_CODE" in df_target.columns and "AGENT_CODE" in merged_agent.columns:
-                            df_target["AGENT_CODE"] = merged_agent["AGENT_CODE"]
-                        
-                        st.info("✅ AGENT_NAME successfully mapped from AGENT sheet using AGENT_CODE lookup.")
-                    except ValueError:
-                        st.warning("⚠️ AGENT sheet not found in reference file. Skipping AGENT_NAME lookup.")
-                
-                # Continue with PLACEMENT lookup for other fields (MAIN_OFFICE_ADDRESS, M_PHONE, M_TEL, CLIENT_EMAIL)
-                if required_lookup_name and lookup_exists and "PLACEMENT" in df_source.columns:
-                    df_lookup = pd.read_excel(lookup_filename)
-                    df_lookup.columns = df_lookup.columns.astype(str).str.strip().str.upper() 
-                    for col in df_lookup.columns:
-                        if df_lookup[col].dtype == 'object':
-                            df_lookup[col] = df_lookup[col].astype(str).str.strip()
+                # =============================================================
+                # LOOKUP LOGIC (only for Demand Letter mode with reference file)
+                # =============================================================
+                if st.session_state.mode == "Demand Letter with Transmittal" and required_lookup_name and lookup_exists:
+                    # AGENT_NAME lookup via AGENT_CODE
+                    if "AGENT_CODE" in df_source.columns:
+                        try:
+                            df_agent_lookup = pd.read_excel(lookup_filename, sheet_name="AGENT")
+                            df_agent_lookup.columns = df_agent_lookup.columns.astype(str).str.strip().str.upper()
+                            for col in df_agent_lookup.columns:
+                                if df_agent_lookup[col].dtype == 'object':
+                                    df_agent_lookup[col] = df_agent_lookup[col].astype(str).str.strip()
+                            
+                            temp_agent = df_source[["AGENT_CODE"]].copy()
+                            temp_agent["AGENT_CODE"] = temp_agent["AGENT_CODE"].fillna("").astype(str).str.strip()
+                            
+                            merged_agent = pd.merge(temp_agent, df_agent_lookup, on="AGENT_CODE", how="left")
+                            
+                            if "AGENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
+                                df_target["AGENT_NAME"] = merged_agent["AGENT_NAME"]
+                            
+                            if "CLIENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
+                                df_target["CLIENT_NAME"] = merged_agent["AGENT_NAME"]
+                            
+                            if "AGENT_CODE" in df_target.columns and "AGENT_CODE" in merged_agent.columns:
+                                df_target["AGENT_CODE"] = merged_agent["AGENT_CODE"]
+                            
+                            st.info("✅ AGENT_NAME successfully mapped from AGENT sheet using AGENT_CODE lookup.")
+                        except ValueError:
+                            st.warning("⚠️ AGENT sheet not found in reference file. Skipping AGENT_NAME lookup.")
+                    
+                    # PLACEMENT lookup for other fields (MAIN_OFFICE_ADDRESS, M_PHONE, M_TEL, CLIENT_EMAIL)
+                    if "PLACEMENT" in df_source.columns:
+                        df_lookup = pd.read_excel(lookup_filename)
+                        df_lookup.columns = df_lookup.columns.astype(str).str.strip().str.upper() 
+                        for col in df_lookup.columns:
+                            if df_lookup[col].dtype == 'object':
+                                df_lookup[col] = df_lookup[col].astype(str).str.strip()
 
-                    temp_source = df_source[["PLACEMENT"]].copy()
-                    temp_source["PLACEMENT"] = temp_source["PLACEMENT"].fillna("").astype(str).str.strip()
+                        temp_source = df_source[["PLACEMENT"]].copy()
+                        temp_source["PLACEMENT"] = temp_source["PLACEMENT"].fillna("").astype(str).str.strip()
 
-                    merged_lookup = pd.merge(temp_source, df_lookup, on="PLACEMENT", how="left")
+                        merged_lookup = pd.merge(temp_source, df_lookup, on="PLACEMENT", how="left")
 
-                    placement_mappings = {
-                        "MAIN_OFFICE_ADDRESS": "MAIN_OFFICE_ADDRESS",
-                        "M_PHONE": "M_PHONE",
-                        "M_TEL": "M_TEL",
-                        "CLIENT_EMAIL": "CLIENT_EMAIL"
-                    }
+                        placement_mappings = {
+                            "MAIN_OFFICE_ADDRESS": "MAIN_OFFICE_ADDRESS",
+                            "M_PHONE": "M_PHONE",
+                            "M_TEL": "M_TEL",
+                            "CLIENT_EMAIL": "CLIENT_EMAIL"
+                        }
 
-                    for target_col, lookup_col in placement_mappings.items():
-                        if target_col in df_target.columns and lookup_col in merged_lookup.columns:
-                            valid_series = merged_lookup[lookup_col]
-                            df_target[target_col] = valid_series
+                        for target_col, lookup_col in placement_mappings.items():
+                            if target_col in df_target.columns and lookup_col in merged_lookup.columns:
+                                valid_series = merged_lookup[lookup_col]
+                                df_target[target_col] = valid_series
 
+                # Fill empty cells
                 record_count = len(df_target)
                 df_target = df_target.fillna("")
 
@@ -320,7 +379,6 @@ if uploaded_file:
                 
                 st.write("")
                 
-                # FIXED: Replaced width="stretch" with use_container_width=True to prevent a secondary crash
                 st.dataframe(df_target, use_container_width=True)
 
                 excel_buffer = io.BytesIO()
@@ -334,7 +392,6 @@ if uploaded_file:
                 
                 _, btn_col, _ = st.columns([1, 2, 1])
                 with btn_col:
-                    # FIXED: Replaced width="stretch" with use_container_width=True
                     st.download_button(
                         label=f"⚡ Download {selected_client_name} {selected_template} Excel",
                         data=excel_data,
