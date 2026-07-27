@@ -269,7 +269,11 @@ if uploaded_file:
                     elif target_col == "CLIENT_NAME":
                         df_target["CLIENT_NAME"] = selected_client_name
                     elif target_col == "DL_TYPE":
-                        df_target["DL_TYPE"] = selected_template
+                        # For demand letter, use the template name; for transmittal, force "DL1"
+                        if st.session_state.mode == "Transmittal Only":
+                            df_target["DL_TYPE"] = "DL1"
+                        else:
+                            df_target["DL_TYPE"] = selected_template
 
                 if "DF_2926" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
                     df_target["DF_2926"] = df_source["OB/PRINCIPAL"]
