@@ -21,13 +21,55 @@ with col_header:
     st.title("🎯 DLX Mapper")
 with col_reset:
     st.write("") 
-    # FIXED: Replaced width="stretch" with use_container_width=True
     if st.button("🔄 Reset App", use_container_width=True, type="secondary"):
         st.session_state.uploader_key += 1
         st.rerun()
 
 st.write("---")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# =========================================================
+# STEP 0: MODE SELECTION (Demand Letter vs Transmittal Only)
+# =========================================================
+st.subheader("📌 Select Output Type")
+
+mode = st.radio(
+    "Choose the type of document to generate:",
+    options=["Demand Letter with Transmittal", "Transmittal Only"],
+    index=0,
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+# Define campaign lists per mode
+demand_letter_campaigns = [
+    "CBS HOUSING LOAN",
+    "PIF FORECLOSURE",
+    "PIF HOME LOAN"
+]
+
+transmittal_only_campaigns = [
+    "SBC HOME LOAN",
+    "BPI",
+    "BPI BANKO",
+    "BPI CARDS EARLY",
+    "BPI CARDS 30DPD",
+    "BPI CARDS XDAYS",
+    "BPI PL XDAYS",
+    "BPI PL 30DPD",
+    "BPI PL 60DPD",
+    "BPI RBANK CARDS 30DPD",
+    "BPI RBANK CARDS 60DPD",
+    "ROBINSONS BPI"
+]
+
+# Choose the appropriate campaign list based on mode
+if mode == "Demand Letter with Transmittal":
+    client_name_options = demand_letter_campaigns
+else:
+    client_name_options = transmittal_only_campaigns
+
+st.write("---")
 
 # 1. STEP 1: Configuration Control Panel (Moved to top)
 st.subheader("⚙️ Select Section")
@@ -36,15 +78,6 @@ with st.container(border=True):
     col1, col2 = st.columns(2, gap="large")
     
     with col1:
-        client_name_options = [
-            "PIF HOME LOAN",
-            "PIF FORECLOSURE",
-            "SBC HOME LOAN",
-            "SBF HOME LOAN",
-            "CBS HOUSING LOAN",
-            "BDO HOME LOAN COLLECT",
-            "UBP HOMELOAN MORTGAGE"
-        ]
         selected_client_name = st.selectbox(
             "👤 Select Campaign:", 
             client_name_options,
@@ -320,7 +353,6 @@ if uploaded_file:
                 
                 st.write("")
                 
-                # FIXED: Replaced width="stretch" with use_container_width=True to prevent a secondary crash
                 st.dataframe(df_target, use_container_width=True)
 
                 excel_buffer = io.BytesIO()
@@ -334,7 +366,6 @@ if uploaded_file:
                 
                 _, btn_col, _ = st.columns([1, 2, 1])
                 with btn_col:
-                    # FIXED: Replaced width="stretch" with use_container_width=True
                     st.download_button(
                         label=f"⚡ Download {selected_client_name} {selected_template} Excel",
                         data=excel_data,
