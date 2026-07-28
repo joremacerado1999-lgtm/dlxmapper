@@ -98,7 +98,7 @@ st.write("---")
 st.subheader("⚙️ Select Section")
 
 with st.container(border=True):
-    # Use three columns: Campaign, Template, DL Type (only shown for Transmittal Only)
+    # Use three columns: Campaign, Template, DL Type / Filter
     col1, col2, col3 = st.columns(3, gap="large")
     
     with col1:
@@ -111,10 +111,8 @@ with st.container(border=True):
     with col2:
         # Determine the folder to look for templates based on mode
         if st.session_state.mode == "Transmittal Only":
-            # Use a fixed "Transmittal" folder – place your transmittal template(s) here
             client_dir = os.path.join(SCRIPT_DIR, "Transmittal")
         else:
-            # Use campaign-specific folder
             client_dir = os.path.join(SCRIPT_DIR, selected_client_name)
         
         template_options = []
@@ -134,11 +132,9 @@ with st.container(border=True):
         )
 
     with col3:
-        # Only show DL Type dropdown when in Transmittal Only mode
+        # For Transmittal Only: show DL Type dropdown
         if st.session_state.mode == "Transmittal Only":
-            # Define the allowed DL types in the exact required order
             dl_type_options = ["DL1", "DL4", "DL11", "DL12", "DL13"]
-            # Ensure the current session state value is in the list; if not, default to first
             if st.session_state.dl_type not in dl_type_options:
                 st.session_state.dl_type = dl_type_options[0]
             selected_dl_type = st.selectbox(
@@ -149,18 +145,19 @@ with st.container(border=True):
             )
             st.session_state.dl_type = selected_dl_type
         else:
-            # Placeholder to keep layout consistent
-            st.empty()
+            # Demand Letter mode: placeholder for filter (will be filled after file upload)
+            # We'll use an empty placeholder; we'll conditionally show content later via st.empty
+            filter_placeholder = st.empty()
+            # Store the placeholder in session state so we can update it after upload
+            st.session_state.filter_placeholder = filter_placeholder
 
 # =========================================================
 # DYNAMIC FILE PATH ROUTING & DIAGNOSTICS
 # =========================================================
 
-# Build the full template path using the determined client_dir
 template_filename = os.path.join(client_dir, f"{selected_template}.xlsx")
 template_exists = os.path.exists(template_filename)
 
-# Lookup file logic (only for demand letter mode and specific campaigns)
 required_lookup_name = None
 if st.session_state.mode == "Demand Letter with Transmittal":
     if selected_client_name == "PIF HOME LOAN":
@@ -201,7 +198,7 @@ with st.expander("🔍 System File Path Diagnostics", expanded=diagnostics_expan
 
 st.write("---")
 
-# 2. STEP 2: Main Source File Upload (Moved below selection)
+# 2. STEP 2: Main Source File Upload
 st.subheader("📥 Upload Source File")
 uploaded_file = st.file_uploader(
     label="Drag and drop your source file configuration (Excel or CSV formats supported)", 
@@ -210,12 +207,23 @@ uploaded_file = st.file_uploader(
     key=f"file_uploader_{st.session_state.uploader_key}" 
 )
 
+# We'll store the uploaded file data in session state to reuse in the filter placeholder
+if "df_source" not in st.session_state:
+    st.session_state.df_source = None
+if "dl_filter_options" not in st.session_state:
+    st.session_state.dl_filter_options = []
+if "dl_filter_counts" not in st.session_state:
+    st.session_state.dl_filter_counts = {}
+if "selected_dl_filter" not in st.session_state:
+    st.session_state.selected_dl_filter = "All"
+
 # 3. Processing Core Engine Routine Execution
 if uploaded_file:
     if not template_exists:
         st.error("🛑 Processing halted: The requested template layout parameters could not be validated because the file is missing from local path layout directories.")
     else:
         try:
+            # --- Read the file (same as before) ---
             if uploaded_file.name.endswith('.csv'):
                 try:
                     df_source = pd.read_csv(uploaded_file)
@@ -223,36 +231,27 @@ if uploaded_file:
                     uploaded_file.seek(0)
                     df_source = pd.read_csv(uploaded_file, encoding='latin1')
             else:
-                # Check if the Excel file has a "SUMMARY" sheet
                 sheet_names = pd.ExcelFile(uploaded_file).sheet_names
                 uploaded_file.seek(0)
-                
-                # If "SUMMARY" sheet exists, use it; otherwise use the default logic
                 if "SUMMARY" in sheet_names:
                     st.info("📊 Found 'SUMMARY' sheet in the uploaded file. Using SUMMARY sheet for processing.")
                     df_source = pd.read_excel(uploaded_file, sheet_name="SUMMARY")
                     header_row_index = 0
                 else:
-                    # Fallback to original behavior: auto-detect header row
                     df_temp = pd.read_excel(uploaded_file, header=None, nrows=15)
                     header_row_index = 0
-                    
                     for i, row in df_temp.iterrows():
                         row_values = [str(val).strip().upper() for val in row.values]
                         if any(key in row_values for key in ["ACCOUNT NUMBER", "OB/PRINCIPAL", "PLACEMENT", "CH NAME", "CH CODE"]):
                             header_row_index = i
                             break
-                    
                     uploaded_file.seek(0)
                     df_source = pd.read_excel(uploaded_file, header=header_row_index)
                     st.info(f"**🛠️ Auto-Header Scanner:** Successfully locked onto headers at Row {header_row_index + 1}:\n\n`{', '.join(df_source.columns.tolist())}`")
-                
+            
             df_source.columns = df_source.columns.astype(str).str.strip().str.upper()
             
-            # =============================================================
-            # NEW: Detect DL_TYPE column in source and display counts + filter
-            # =============================================================
-            # Look for a column that might represent DL_TYPE
+            # Detect DL_TYPE column
             source_dl_col = None
             for possible in ["DL_TYPE", "DL TYPE", "DL-TYPE"]:
                 if possible in df_source.columns:
@@ -262,42 +261,56 @@ if uploaded_file:
                 df_source.rename(columns={source_dl_col: "DL_TYPE"}, inplace=True)
                 source_dl_col = "DL_TYPE"
 
-            # If a DL_TYPE column exists, show count summary and filter (only in Demand Letter mode)
+            # Store df_source and DL_TYPE info in session state for the filter placeholder
+            st.session_state.df_source = df_source
             if "DL_TYPE" in df_source.columns and st.session_state.mode == "Demand Letter with Transmittal":
-                # Count distinct values
-                dl_counts = df_source["DL_TYPE"].value_counts().reset_index()
-                dl_counts.columns = ["DL_TYPE", "Count"]
-                st.subheader("📊 DL_TYPE Summary from Source File")
-                st.dataframe(dl_counts, use_container_width=True, hide_index=True)
-
                 unique_types = sorted(df_source["DL_TYPE"].dropna().unique())
-                if len(unique_types) > 0:
-                    # Default to the first actual type (index 1) instead of "All" (index 0)
-                    default_index = 1 if len(unique_types) >= 1 else 0
-                    selected_dl_filter = st.selectbox(
-                        "📑 Filter by DL_TYPE (Demand Letter mode):",
-                        options=["All"] + unique_types,
-                        index=default_index,
-                        help="Select a specific DL_TYPE to process only those rows; 'All' processes every row."
-                    )
-                    if selected_dl_filter != "All":
-                        df_source = df_source[df_source["DL_TYPE"] == selected_dl_filter]
-                        st.info(f"✅ Filtered to DL_TYPE = **{selected_dl_filter}**. **{len(df_source)}** rows remaining.")
-                    else:
-                        st.info(f"📊 Processing all DL_TYPE values. Total rows: **{len(df_source)}**")
-                else:
-                    st.warning("⚠️ DL_TYPE column exists but contains only empty values.")
-            # =============================================================
+                counts = df_source["DL_TYPE"].value_counts().to_dict()
+                st.session_state.dl_filter_options = unique_types
+                st.session_state.dl_filter_counts = counts
+                # Set default selection to first type if not set
+                if st.session_state.selected_dl_filter == "All" and len(unique_types) > 0:
+                    st.session_state.selected_dl_filter = unique_types[0]
+            else:
+                st.session_state.dl_filter_options = []
+                st.session_state.dl_filter_counts = {}
 
+            # Now update the placeholder in col3 (if in Demand Letter mode)
+            if st.session_state.mode == "Demand Letter with Transmittal":
+                filter_ph = st.session_state.get("filter_placeholder")
+                if filter_ph is not None:
+                    with filter_ph:
+                        if "DL_TYPE" in df_source.columns and len(st.session_state.dl_filter_options) > 0:
+                            # Show a compact summary
+                            summary_text = ", ".join([f"{k}: {v}" for k, v in st.session_state.dl_filter_counts.items()])
+                            st.caption(f"📊 Counts: {summary_text}")
+                            # Dropdown for filter
+                            selected = st.selectbox(
+                                "📑 Filter by DL_TYPE:",
+                                options=["All"] + st.session_state.dl_filter_options,
+                                index=0 if st.session_state.selected_dl_filter == "All" else (["All"] + st.session_state.dl_filter_options).index(st.session_state.selected_dl_filter),
+                                help="Select a specific DL_TYPE to process only those rows."
+                            )
+                            st.session_state.selected_dl_filter = selected
+                        else:
+                            st.caption("ℹ️ No DL_TYPE column found in uploaded file.")
+            
+            # -----------------------------------------------------------------
+            # Now apply the filter to df_source if applicable
+            # -----------------------------------------------------------------
+            if st.session_state.mode == "Demand Letter with Transmittal" and "DL_TYPE" in df_source.columns:
+                selected_filter = st.session_state.selected_dl_filter
+                if selected_filter != "All":
+                    df_source = df_source[df_source["DL_TYPE"] == selected_filter]
+                    st.info(f"✅ Filtered to DL_TYPE = **{selected_filter}**. **{len(df_source)}** rows remaining.")
+                else:
+                    st.info(f"📊 Processing all DL_TYPE values. Total rows: **{len(df_source)}**")
+            
+            # Now proceed with mapping (same as before)
             df_template_structure = pd.read_excel(template_filename, nrows=0)
             target_columns = [str(col).strip() for col in df_template_structure.columns.tolist()]
 
             if target_columns:
-                
-                # =================================================================
-                # UPGRADED OMNI-MAPPING DICTIONARY
-                # Automatically maps all known variations of Agent names and codes
-                # =================================================================
                 mapping = {
                     "DF_2926": ["OB/PRINCIPAL"],
                     "DF_3179": ["OB/PRINCIPAL"],
@@ -311,14 +324,8 @@ if uploaded_file:
                     "DL_ADDRESS_TYPE_FULL": ["ADD TYPE"],
                     "LEADS_PLACEMENT": ["PLACEMENT"],
                     "FINAL_AREA": ["FINAL AREA"],
-
-                    # Agent Code Variations
                     "AGENT_CODE": ["AGENT CODE", "AGENT_CODE", "LEADS_AGENTCODE"],
-
-                    # Agent Name Variations
                     "AGENT_NAME": ["AGENT NAME", "AGENT_NAME", "LEADS_AGENTNAME", "LEADS_AGENT"],
-
-                    # PIF FORECLOSURE DL9
                     "DF_5632": ["AMOUNT IN WORD", "AMOUNT IN WORDS"],
                 }
 
@@ -337,27 +344,21 @@ if uploaded_file:
                     elif target_col == "CLIENT_NAME":
                         df_target["CLIENT_NAME"] = selected_client_name
                     elif target_col == "DL_TYPE":
-                        # =================================================
-                        # CHANGED: for Demand Letter, use source if available
-                        # =================================================
                         if st.session_state.mode == "Transmittal Only":
                             df_target["DL_TYPE"] = st.session_state.dl_type
                         else:
-                            # Demand Letter mode: prefer source column, else template name
                             if "DL_TYPE" in df_source.columns:
                                 df_target["DL_TYPE"] = df_source["DL_TYPE"]
                             else:
                                 df_target["DL_TYPE"] = selected_template
 
+                # Additional column-specific formatting (unchanged)
                 if "DF_2926" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
                     df_target["DF_2926"] = df_source["OB/PRINCIPAL"]
-                
                 if "DF_3179" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
                     df_target["DF_3179"] = df_source["OB/PRINCIPAL"]
-
                 if "LEADS_OB" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
                     df_target["LEADS_OB"] = df_source["OB/PRINCIPAL"]
-                
                 if "LEADS_ACCTNO" in df_target.columns and "ACCOUNT NUMBER" in df_source.columns:
                     if selected_client_name == "SBC HOME LOAN":
                         df_target["LEADS_ACCTNO"] = df_source["ACCOUNT NUMBER"]
@@ -365,34 +366,27 @@ if uploaded_file:
                         clean_acct = df_source["ACCOUNT NUMBER"].fillna("").astype(str).str.strip()
                         clean_acct = clean_acct.replace(r'\.0$', '', regex=True)
                         df_target["LEADS_ACCTNO"] = clean_acct
-
                 if "ADDRESS_TYPE" in df_target.columns and "ADD TYPE" in df_source.columns:
                     clean_addr = df_source["ADD TYPE"].fillna("").astype(str).str.strip()
                     df_target["ADDRESS_TYPE"] = clean_addr.str.replace(r'(?i)\s*ADDRESS\s*', '', regex=True).str.strip()
 
+                # Format numeric and date columns (same as before)
                 if "DF_2926" in df_target.columns:
                     temp_num = pd.to_numeric(df_target["DF_2926"].astype(str).str.replace(',', '', regex=False), errors='coerce')
                     df_target["DF_2926"] = temp_num.apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "")
-                
                 if "DF_3179" in df_target.columns:
                     temp_num_3179 = pd.to_numeric(df_target["DF_3179"].astype(str).str.replace(',', '', regex=False), errors='coerce')
                     df_target["DF_3179"] = temp_num_3179.apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "")
-
                 if "DF_5633" in df_target.columns:
                     df_target["DF_5633"] = pd.to_datetime(df_target["DF_5633"], errors='coerce').dt.strftime('%B %d, %Y').fillna("")
-
                 if "LEADS_OB" in df_target.columns:
                     temp_num_ob = pd.to_numeric(df_target["LEADS_OB"].astype(str).str.replace(',', '', regex=False), errors='coerce')
                     df_target["LEADS_OB"] = temp_num_ob.apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "")
-
                 if "LEADS_ENDO_DATE" in df_target.columns:
                     df_target["LEADS_ENDO_DATE"] = pd.to_datetime(df_target["LEADS_ENDO_DATE"], errors='coerce').dt.strftime('%B %d, %Y').fillna("")
 
-                # =============================================================
-                # LOOKUP LOGIC (only for Demand Letter mode with reference file)
-                # =============================================================
+                # Lookup logic (unchanged)
                 if st.session_state.mode == "Demand Letter with Transmittal" and required_lookup_name and lookup_exists:
-                    # AGENT_NAME lookup via AGENT_CODE
                     if "AGENT_CODE" in df_source.columns:
                         try:
                             df_agent_lookup = pd.read_excel(lookup_filename, sheet_name="AGENT")
@@ -400,49 +394,36 @@ if uploaded_file:
                             for col in df_agent_lookup.columns:
                                 if df_agent_lookup[col].dtype == 'object':
                                     df_agent_lookup[col] = df_agent_lookup[col].astype(str).str.strip()
-                            
                             temp_agent = df_source[["AGENT_CODE"]].copy()
                             temp_agent["AGENT_CODE"] = temp_agent["AGENT_CODE"].fillna("").astype(str).str.strip()
-                            
                             merged_agent = pd.merge(temp_agent, df_agent_lookup, on="AGENT_CODE", how="left")
-                            
                             if "AGENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
                                 df_target["AGENT_NAME"] = merged_agent["AGENT_NAME"]
-                            
                             if "CLIENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
                                 df_target["CLIENT_NAME"] = merged_agent["AGENT_NAME"]
-                            
                             if "AGENT_CODE" in df_target.columns and "AGENT_CODE" in merged_agent.columns:
                                 df_target["AGENT_CODE"] = merged_agent["AGENT_CODE"]
-                            
                             st.info("✅ AGENT_NAME successfully mapped from AGENT sheet using AGENT_CODE lookup.")
                         except ValueError:
                             st.warning("⚠️ AGENT sheet not found in reference file. Skipping AGENT_NAME lookup.")
-                    
-                    # PLACEMENT lookup for other fields (MAIN_OFFICE_ADDRESS, M_PHONE, M_TEL, CLIENT_EMAIL)
                     if "PLACEMENT" in df_source.columns:
                         df_lookup = pd.read_excel(lookup_filename)
-                        df_lookup.columns = df_lookup.columns.astype(str).str.strip().str.upper() 
+                        df_lookup.columns = df_lookup.columns.astype(str).str.strip().str.upper()
                         for col in df_lookup.columns:
                             if df_lookup[col].dtype == 'object':
                                 df_lookup[col] = df_lookup[col].astype(str).str.strip()
-
                         temp_source = df_source[["PLACEMENT"]].copy()
                         temp_source["PLACEMENT"] = temp_source["PLACEMENT"].fillna("").astype(str).str.strip()
-
                         merged_lookup = pd.merge(temp_source, df_lookup, on="PLACEMENT", how="left")
-
                         placement_mappings = {
                             "MAIN_OFFICE_ADDRESS": "MAIN_OFFICE_ADDRESS",
                             "M_PHONE": "M_PHONE",
                             "M_TEL": "M_TEL",
                             "CLIENT_EMAIL": "CLIENT_EMAIL"
                         }
-
                         for target_col, lookup_col in placement_mappings.items():
                             if target_col in df_target.columns and lookup_col in merged_lookup.columns:
-                                valid_series = merged_lookup[lookup_col]
-                                df_target[target_col] = valid_series
+                                df_target[target_col] = merged_lookup[lookup_col]
 
                 # Fill empty cells
                 record_count = len(df_target)
@@ -456,7 +437,6 @@ if uploaded_file:
                 m3.metric(label="Output Format Extension", value=".xlsx (Excel Workbook)")
                 
                 st.write("")
-                
                 st.dataframe(df_target, use_container_width=True)
 
                 excel_buffer = io.BytesIO()
@@ -465,7 +445,6 @@ if uploaded_file:
                 excel_data = excel_buffer.getvalue()
                 
                 st.write("")
-                
                 custom_filename = f"{selected_client_name}_{selected_template}_{record_count}.xlsx"
                 
                 _, btn_col, _ = st.columns([1, 2, 1])
