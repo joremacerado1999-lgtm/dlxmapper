@@ -75,14 +75,18 @@ transmittal_only_campaigns = [
     "BPI PL 60DPD",
     "BPI RBANK CARDS 30DPD",
     "BPI RBANK CARDS 60DPD",
-    "ROBINSONS BPI"
+    "ROBINSONS BPI",
+    "BPI AUTO",
+    "BDO HOMELOAN SKIP",
+    "BDO 60DPD",
+    "BDO AUTO LOAN"
 ]
 
-# Choose the appropriate campaign list based on current mode
+# Choose the appropriate campaign list based on current mode and sort alphabetically
 if st.session_state.mode == "Demand Letter with Transmittal":
-    client_name_options = demand_letter_campaigns
+    client_name_options = sorted(demand_letter_campaigns)
 else:
-    client_name_options = transmittal_only_campaigns
+    client_name_options = sorted(transmittal_only_campaigns)
 
 st.write("---")
 
