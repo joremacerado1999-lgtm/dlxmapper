@@ -136,8 +136,8 @@ with st.container(border=True):
     with col3:
         # Only show DL Type dropdown when in Transmittal Only mode
         if st.session_state.mode == "Transmittal Only":
-            # Define the allowed DL types and sort them naturally
-            dl_type_options = sorted(["DL11", "DL12", "DL1", "DL13", "DL4"])
+            # Define the allowed DL types in the exact required order
+            dl_type_options = ["DL1", "DL4", "DL11", "DL12", "DL13"]
             # Ensure the current session state value is in the list; if not, default to first
             if st.session_state.dl_type not in dl_type_options:
                 st.session_state.dl_type = dl_type_options[0]
