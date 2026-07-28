@@ -249,6 +249,44 @@ if uploaded_file:
                 
             df_source.columns = df_source.columns.astype(str).str.strip().str.upper()
             
+            # =============================================================
+            # NEW: Detect DL_TYPE column in source and display counts
+            # =============================================================
+            # Look for a column that might represent DL_TYPE
+            source_dl_col = None
+            for possible in ["DL_TYPE", "DL TYPE", "DL-TYPE"]:
+                if possible in df_source.columns:
+                    source_dl_col = possible
+                    break
+            if source_dl_col is not None and source_dl_col != "DL_TYPE":
+                df_source.rename(columns={source_dl_col: "DL_TYPE"}, inplace=True)
+                source_dl_col = "DL_TYPE"
+
+            # If a DL_TYPE column exists, show count summary and filter (only in Demand Letter mode)
+            if "DL_TYPE" in df_source.columns and st.session_state.mode == "Demand Letter with Transmittal":
+                # Count distinct values
+                dl_counts = df_source["DL_TYPE"].value_counts().reset_index()
+                dl_counts.columns = ["DL_TYPE", "Count"]
+                st.subheader("📊 DL_TYPE Summary from Source File")
+                st.dataframe(dl_counts, use_container_width=True, hide_index=True)
+
+                unique_types = sorted(df_source["DL_TYPE"].dropna().unique())
+                if len(unique_types) > 0:
+                    selected_dl_filter = st.selectbox(
+                        "📑 Filter by DL_TYPE (Demand Letter mode):",
+                        options=["All"] + unique_types,
+                        index=0,
+                        help="Select a specific DL_TYPE to process only those rows; 'All' processes every row."
+                    )
+                    if selected_dl_filter != "All":
+                        df_source = df_source[df_source["DL_TYPE"] == selected_dl_filter]
+                        st.info(f"✅ Filtered to DL_TYPE = **{selected_dl_filter}**. **{len(df_source)}** rows remaining.")
+                    else:
+                        st.info(f"📊 Processing all DL_TYPE values. Total rows: **{len(df_source)}**")
+                else:
+                    st.warning("⚠️ DL_TYPE column exists but contains only empty values.")
+            # =============================================================
+
             df_template_structure = pd.read_excel(template_filename, nrows=0)
             target_columns = [str(col).strip() for col in df_template_structure.columns.tolist()]
 
@@ -297,11 +335,17 @@ if uploaded_file:
                     elif target_col == "CLIENT_NAME":
                         df_target["CLIENT_NAME"] = selected_client_name
                     elif target_col == "DL_TYPE":
-                        # Use selected DL type for Transmittal Only, else use template name
+                        # =================================================
+                        # CHANGED: for Demand Letter, use source if available
+                        # =================================================
                         if st.session_state.mode == "Transmittal Only":
                             df_target["DL_TYPE"] = st.session_state.dl_type
                         else:
-                            df_target["DL_TYPE"] = selected_template
+                            # Demand Letter mode: prefer source column, else template name
+                            if "DL_TYPE" in df_source.columns:
+                                df_target["DL_TYPE"] = df_source["DL_TYPE"]
+                            else:
+                                df_target["DL_TYPE"] = selected_template
 
                 if "DF_2926" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
                     df_target["DF_2926"] = df_source["OB/PRINCIPAL"]
