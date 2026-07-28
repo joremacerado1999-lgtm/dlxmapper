@@ -94,11 +94,10 @@ else:
 
 st.write("---")
 
-# 1. STEP 1: Configuration Control Panel (Moved to top)
+# 1. STEP 1: Configuration Control Panel
 st.subheader("⚙️ Select Section")
 
 with st.container(border=True):
-    # Use three columns: Campaign, Template, DL Type / Filter
     col1, col2, col3 = st.columns(3, gap="large")
     
     with col1:
@@ -109,7 +108,6 @@ with st.container(border=True):
         )
         
     with col2:
-        # Determine the folder to look for templates based on mode
         if st.session_state.mode == "Transmittal Only":
             client_dir = os.path.join(SCRIPT_DIR, "Transmittal")
         else:
@@ -132,7 +130,6 @@ with st.container(border=True):
         )
 
     with col3:
-        # For Transmittal Only: show DL Type dropdown
         if st.session_state.mode == "Transmittal Only":
             dl_type_options = ["DL1", "DL4", "DL11", "DL12", "DL13"]
             if st.session_state.dl_type not in dl_type_options:
@@ -145,7 +142,7 @@ with st.container(border=True):
             )
             st.session_state.dl_type = selected_dl_type
         else:
-            # Demand Letter mode: placeholder for filter (will be filled after file upload)
+            # Placeholder for filter (will be filled after file upload)
             filter_placeholder = st.empty()
             st.session_state.filter_placeholder = filter_placeholder
 
@@ -205,7 +202,7 @@ uploaded_file = st.file_uploader(
     key=f"file_uploader_{st.session_state.uploader_key}" 
 )
 
-# We'll store the uploaded file data in session state to reuse in the filter placeholder
+# Session state for filter
 if "df_source" not in st.session_state:
     st.session_state.df_source = None
 if "dl_filter_options" not in st.session_state:
@@ -234,7 +231,6 @@ if uploaded_file:
                 if "SUMMARY" in sheet_names:
                     st.info("📊 Found 'SUMMARY' sheet in the uploaded file. Using SUMMARY sheet for processing.")
                     df_source = pd.read_excel(uploaded_file, sheet_name="SUMMARY")
-                    header_row_index = 0
                 else:
                     df_temp = pd.read_excel(uploaded_file, header=None, nrows=15)
                     header_row_index = 0
@@ -259,7 +255,7 @@ if uploaded_file:
                 df_source.rename(columns={source_dl_col: "DL_TYPE"}, inplace=True)
                 source_dl_col = "DL_TYPE"
 
-            # Store df_source and DL_TYPE info in session state for the filter placeholder
+            # Store in session for filter placeholder
             st.session_state.df_source = df_source
             if "DL_TYPE" in df_source.columns and st.session_state.mode == "Demand Letter with Transmittal":
                 unique_types = sorted(df_source["DL_TYPE"].dropna().unique())
@@ -295,6 +291,9 @@ if uploaded_file:
                 selected_filter = st.session_state.selected_dl_filter
                 if selected_filter != "All":
                     df_source = df_source[df_source["DL_TYPE"] == selected_filter]
+                    if len(df_source) == 0:
+                        st.error(f"❌ No rows found for DL_TYPE = **{selected_filter}**. Please check your file or select a different type.")
+                        st.stop()
                     st.info(f"✅ Filtered to DL_TYPE = **{selected_filter}**. **{len(df_source)}** rows remaining.")
                 else:
                     st.info(f"📊 Processing all DL_TYPE values. Total rows: **{len(df_source)}**")
@@ -420,6 +419,11 @@ if uploaded_file:
                         temp_source = df_source[["PLACEMENT"]].copy()
                         temp_source["PLACEMENT"] = temp_source["PLACEMENT"].fillna("").astype(str).str.strip()
 
+                        # Debug: show sample values
+                        with st.expander("🔍 Placement Lookup Debug Info", expanded=False):
+                            st.write("**Sample PLACEMENT values from source (first 5 unique):**", temp_source["PLACEMENT"].unique()[:5])
+                            st.write("**Sample PLACEMENT values from lookup (first 5 unique):**", df_lookup["PLACEMENT"].unique()[:5])
+
                         # Merge
                         merged_lookup = pd.merge(temp_source, df_lookup, on="PLACEMENT", how="left")
 
@@ -428,10 +432,11 @@ if uploaded_file:
                         st.info(f"🔍 PLACEMENT lookup: {matched_count} out of {len(df_source)} rows matched.")
 
                         if matched_count == 0:
-                            # Show sample values to help debug
-                            source_vals = temp_source["PLACEMENT"].unique()[:5]
-                            lookup_vals = df_lookup["PLACEMENT"].unique()[:5]
-                            st.warning(f"⚠️ No PLACEMENT matches found. Check your source PLACEMENT values (e.g. {', '.join(source_vals)}) against lookup values (e.g. {', '.join(lookup_vals)}).")
+                            st.warning("⚠️ No matches found. Check that your PLACEMENT values exactly match those in the lookup file (case and spaces matter).")
+                            # Show a sample of mismatched values
+                            unmatched = temp_source[~temp_source["PLACEMENT"].isin(df_lookup["PLACEMENT"])]["PLACEMENT"].unique()[:5]
+                            if len(unmatched) > 0:
+                                st.write("**Unmatched source PLACEMENT values (first 5):**", unmatched)
 
                         # Map to target columns
                         placement_mappings = {
@@ -443,6 +448,11 @@ if uploaded_file:
                         for target_col, lookup_col in placement_mappings.items():
                             if target_col in df_target.columns and lookup_col in merged_lookup.columns:
                                 df_target[target_col] = merged_lookup[lookup_col]
+
+                        # Show a sample of the merged data
+                        with st.expander("📊 Sample merged data (first 5 rows)", expanded=False):
+                            sample_merge = merged_lookup.head(5)
+                            st.dataframe(sample_merge)
 
                 # Fill empty cells
                 record_count = len(df_target)
