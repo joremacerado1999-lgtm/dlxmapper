@@ -136,11 +136,15 @@ with st.container(border=True):
     with col3:
         # Only show DL Type dropdown when in Transmittal Only mode
         if st.session_state.mode == "Transmittal Only":
-            dl_type_options = [f"DL{i}" for i in range(1, 7)]
+            # Define the allowed DL types and sort them naturally
+            dl_type_options = sorted(["DL11", "DL12", "DL1", "DL13", "DL4"])
+            # Ensure the current session state value is in the list; if not, default to first
+            if st.session_state.dl_type not in dl_type_options:
+                st.session_state.dl_type = dl_type_options[0]
             selected_dl_type = st.selectbox(
                 "📑 DL Type:",
                 dl_type_options,
-                index=dl_type_options.index(st.session_state.dl_type) if st.session_state.dl_type in dl_type_options else 0,
+                index=dl_type_options.index(st.session_state.dl_type),
                 help="Select the Demand Letter type for Transmittal Only output."
             )
             st.session_state.dl_type = selected_dl_type
