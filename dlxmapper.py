@@ -146,9 +146,7 @@ with st.container(border=True):
             st.session_state.dl_type = selected_dl_type
         else:
             # Demand Letter mode: placeholder for filter (will be filled after file upload)
-            # We'll use an empty placeholder; we'll conditionally show content later via st.empty
             filter_placeholder = st.empty()
-            # Store the placeholder in session state so we can update it after upload
             st.session_state.filter_placeholder = filter_placeholder
 
 # =========================================================
@@ -223,7 +221,7 @@ if uploaded_file:
         st.error("🛑 Processing halted: The requested template layout parameters could not be validated because the file is missing from local path layout directories.")
     else:
         try:
-            # --- Read the file (same as before) ---
+            # --- Read the file ---
             if uploaded_file.name.endswith('.csv'):
                 try:
                     df_source = pd.read_csv(uploaded_file)
@@ -268,23 +266,20 @@ if uploaded_file:
                 counts = df_source["DL_TYPE"].value_counts().to_dict()
                 st.session_state.dl_filter_options = unique_types
                 st.session_state.dl_filter_counts = counts
-                # Set default selection to first type if not set
                 if st.session_state.selected_dl_filter == "All" and len(unique_types) > 0:
                     st.session_state.selected_dl_filter = unique_types[0]
             else:
                 st.session_state.dl_filter_options = []
                 st.session_state.dl_filter_counts = {}
 
-            # Now update the placeholder in col3 (if in Demand Letter mode)
+            # Update the placeholder in col3 (if in Demand Letter mode)
             if st.session_state.mode == "Demand Letter with Transmittal":
                 filter_ph = st.session_state.get("filter_placeholder")
                 if filter_ph is not None:
                     with filter_ph:
                         if "DL_TYPE" in df_source.columns and len(st.session_state.dl_filter_options) > 0:
-                            # Show a compact summary
                             summary_text = ", ".join([f"{k}: {v}" for k, v in st.session_state.dl_filter_counts.items()])
                             st.caption(f"📊 Counts: {summary_text}")
-                            # Dropdown for filter
                             selected = st.selectbox(
                                 "📑 Filter by DL_TYPE:",
                                 options=["All"] + st.session_state.dl_filter_options,
@@ -295,9 +290,7 @@ if uploaded_file:
                         else:
                             st.caption("ℹ️ No DL_TYPE column found in uploaded file.")
             
-            # -----------------------------------------------------------------
-            # Now apply the filter to df_source if applicable
-            # -----------------------------------------------------------------
+            # Apply DL_TYPE filter
             if st.session_state.mode == "Demand Letter with Transmittal" and "DL_TYPE" in df_source.columns:
                 selected_filter = st.session_state.selected_dl_filter
                 if selected_filter != "All":
@@ -306,7 +299,7 @@ if uploaded_file:
                 else:
                     st.info(f"📊 Processing all DL_TYPE values. Total rows: **{len(df_source)}**")
             
-            # Now proceed with mapping (same as before)
+            # Now proceed with mapping
             df_template_structure = pd.read_excel(template_filename, nrows=0)
             target_columns = [str(col).strip() for col in df_template_structure.columns.tolist()]
 
@@ -385,8 +378,11 @@ if uploaded_file:
                 if "LEADS_ENDO_DATE" in df_target.columns:
                     df_target["LEADS_ENDO_DATE"] = pd.to_datetime(df_target["LEADS_ENDO_DATE"], errors='coerce').dt.strftime('%B %d, %Y').fillna("")
 
-                # Lookup logic (unchanged)
+                # =============================================================
+                # LOOKUP LOGIC (Demand Letter only, with reference file)
+                # =============================================================
                 if st.session_state.mode == "Demand Letter with Transmittal" and required_lookup_name and lookup_exists:
+                    # --- AGENT_NAME lookup via AGENT_CODE ---
                     if "AGENT_CODE" in df_source.columns:
                         try:
                             df_agent_lookup = pd.read_excel(lookup_filename, sheet_name="AGENT")
@@ -394,27 +390,50 @@ if uploaded_file:
                             for col in df_agent_lookup.columns:
                                 if df_agent_lookup[col].dtype == 'object':
                                     df_agent_lookup[col] = df_agent_lookup[col].astype(str).str.strip()
+                            
                             temp_agent = df_source[["AGENT_CODE"]].copy()
                             temp_agent["AGENT_CODE"] = temp_agent["AGENT_CODE"].fillna("").astype(str).str.strip()
+                            
                             merged_agent = pd.merge(temp_agent, df_agent_lookup, on="AGENT_CODE", how="left")
+                            
                             if "AGENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
                                 df_target["AGENT_NAME"] = merged_agent["AGENT_NAME"]
                             if "CLIENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
                                 df_target["CLIENT_NAME"] = merged_agent["AGENT_NAME"]
                             if "AGENT_CODE" in df_target.columns and "AGENT_CODE" in merged_agent.columns:
                                 df_target["AGENT_CODE"] = merged_agent["AGENT_CODE"]
+                            
                             st.info("✅ AGENT_NAME successfully mapped from AGENT sheet using AGENT_CODE lookup.")
                         except ValueError:
                             st.warning("⚠️ AGENT sheet not found in reference file. Skipping AGENT_NAME lookup.")
+                    
+                    # --- PLACEMENT lookup for office details ---
                     if "PLACEMENT" in df_source.columns:
-                        df_lookup = pd.read_excel(lookup_filename)
+                        # Read the "ALL" sheet (first sheet) which contains the placement mapping
+                        df_lookup = pd.read_excel(lookup_filename, sheet_name="ALL")
                         df_lookup.columns = df_lookup.columns.astype(str).str.strip().str.upper()
                         for col in df_lookup.columns:
                             if df_lookup[col].dtype == 'object':
                                 df_lookup[col] = df_lookup[col].astype(str).str.strip()
+
+                        # Prepare source placement values
                         temp_source = df_source[["PLACEMENT"]].copy()
                         temp_source["PLACEMENT"] = temp_source["PLACEMENT"].fillna("").astype(str).str.strip()
+
+                        # Merge
                         merged_lookup = pd.merge(temp_source, df_lookup, on="PLACEMENT", how="left")
+
+                        # Count matches
+                        matched_count = merged_lookup["MAIN_OFFICE_ADDRESS"].notna().sum()
+                        st.info(f"🔍 PLACEMENT lookup: {matched_count} out of {len(df_source)} rows matched.")
+
+                        if matched_count == 0:
+                            # Show sample values to help debug
+                            source_vals = temp_source["PLACEMENT"].unique()[:5]
+                            lookup_vals = df_lookup["PLACEMENT"].unique()[:5]
+                            st.warning(f"⚠️ No PLACEMENT matches found. Check your source PLACEMENT values (e.g. {', '.join(source_vals)}) against lookup values (e.g. {', '.join(lookup_vals)}).")
+
+                        # Map to target columns
                         placement_mappings = {
                             "MAIN_OFFICE_ADDRESS": "MAIN_OFFICE_ADDRESS",
                             "M_PHONE": "M_PHONE",
