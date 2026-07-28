@@ -250,7 +250,7 @@ if uploaded_file:
             df_source.columns = df_source.columns.astype(str).str.strip().str.upper()
             
             # =============================================================
-            # NEW: Detect DL_TYPE column in source and display counts
+            # NEW: Detect DL_TYPE column in source and display counts + filter
             # =============================================================
             # Look for a column that might represent DL_TYPE
             source_dl_col = None
@@ -272,10 +272,12 @@ if uploaded_file:
 
                 unique_types = sorted(df_source["DL_TYPE"].dropna().unique())
                 if len(unique_types) > 0:
+                    # Default to the first actual type (index 1) instead of "All" (index 0)
+                    default_index = 1 if len(unique_types) >= 1 else 0
                     selected_dl_filter = st.selectbox(
                         "📑 Filter by DL_TYPE (Demand Letter mode):",
                         options=["All"] + unique_types,
-                        index=0,
+                        index=default_index,
                         help="Select a specific DL_TYPE to process only those rows; 'All' processes every row."
                     )
                     if selected_dl_filter != "All":
