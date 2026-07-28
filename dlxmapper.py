@@ -140,7 +140,7 @@ with st.container(border=True):
             )
             st.session_state.dl_type = selected_dl_type
         else:
-            # Placeholder for filter (will be filled after file upload)
+            # Placeholder for the DL_TYPE filter (will be filled after file upload)
             filter_placeholder = st.empty()
             st.session_state.filter_placeholder = filter_placeholder
 
@@ -284,7 +284,7 @@ if uploaded_file:
                         else:
                             st.caption("ℹ️ No DL_TYPE column found in uploaded file.")
             
-            # Apply DL_TYPE filter
+            # Apply DL_TYPE filter – stop if no rows
             if st.session_state.mode == "Demand Letter with Transmittal" and "DL_TYPE" in df_source.columns:
                 selected_filter = st.session_state.selected_dl_filter
                 if selected_filter != "All":
@@ -342,7 +342,7 @@ if uploaded_file:
                             else:
                                 df_target["DL_TYPE"] = selected_template
 
-                # Additional column-specific formatting (unchanged)
+                # Additional column-specific formatting
                 if "DF_2926" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
                     df_target["DF_2926"] = df_source["OB/PRINCIPAL"]
                 if "DF_3179" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
@@ -360,7 +360,7 @@ if uploaded_file:
                     clean_addr = df_source["ADD TYPE"].fillna("").astype(str).str.strip()
                     df_target["ADDRESS_TYPE"] = clean_addr.str.replace(r'(?i)\s*ADDRESS\s*', '', regex=True).str.strip()
 
-                # Format numeric and date columns (same as before)
+                # Format numeric and date columns
                 if "DF_2926" in df_target.columns:
                     temp_num = pd.to_numeric(df_target["DF_2926"].astype(str).str.replace(',', '', regex=False), errors='coerce')
                     df_target["DF_2926"] = temp_num.apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "")
