@@ -19,6 +19,10 @@ if "uploader_key" not in st.session_state:
 if "mode" not in st.session_state:
     st.session_state.mode = "Demand Letter with Transmittal"  # default
 
+# Initialize DL type for Transmittal Only mode
+if "dl_type" not in st.session_state:
+    st.session_state.dl_type = "DL1"  # default
+
 # App Header Styling with Reset Button
 col_header, col_reset = st.columns([4, 1])
 with col_header:
@@ -94,7 +98,8 @@ st.write("---")
 st.subheader("⚙️ Select Section")
 
 with st.container(border=True):
-    col1, col2 = st.columns(2, gap="large")
+    # Use three columns: Campaign, Template, DL Type (only shown for Transmittal Only)
+    col1, col2, col3 = st.columns(3, gap="large")
     
     with col1:
         selected_client_name = st.selectbox(
@@ -127,6 +132,21 @@ with st.container(border=True):
             template_options,
             help="Select the specific DL blueprint mapping template layout required for file generations."
         )
+
+    with col3:
+        # Only show DL Type dropdown when in Transmittal Only mode
+        if st.session_state.mode == "Transmittal Only":
+            dl_type_options = [f"DL{i}" for i in range(1, 7)]
+            selected_dl_type = st.selectbox(
+                "📑 DL Type:",
+                dl_type_options,
+                index=dl_type_options.index(st.session_state.dl_type) if st.session_state.dl_type in dl_type_options else 0,
+                help="Select the Demand Letter type for Transmittal Only output."
+            )
+            st.session_state.dl_type = selected_dl_type
+        else:
+            # Placeholder to keep layout consistent
+            st.empty()
 
 # =========================================================
 # DYNAMIC FILE PATH ROUTING & DIAGNOSTICS
@@ -273,9 +293,9 @@ if uploaded_file:
                     elif target_col == "CLIENT_NAME":
                         df_target["CLIENT_NAME"] = selected_client_name
                     elif target_col == "DL_TYPE":
-                        # For demand letter, use the template name; for transmittal, force "DL1"
+                        # Use selected DL type for Transmittal Only, else use template name
                         if st.session_state.mode == "Transmittal Only":
-                            df_target["DL_TYPE"] = "DL1"
+                            df_target["DL_TYPE"] = st.session_state.dl_type
                         else:
                             df_target["DL_TYPE"] = selected_template
 
