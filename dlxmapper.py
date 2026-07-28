@@ -37,11 +37,10 @@ st.write("---")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # =========================================================
-# STEP 0: MODE SELECTION (Demand Letter vs Transmittal Only)
+# STEP 0: MODE SELECTION
 # =========================================================
 st.subheader("📌 Select Output Type")
 
-# Two buttons for mode selection
 col_mode1, col_mode2 = st.columns(2)
 with col_mode1:
     if st.button(
@@ -86,7 +85,6 @@ transmittal_only_campaigns = [
     "BDO AUTO LOAN"
 ]
 
-# Choose the appropriate campaign list based on current mode and sort alphabetically
 if st.session_state.mode == "Demand Letter with Transmittal":
     client_name_options = sorted(demand_letter_campaigns)
 else:
@@ -390,17 +388,17 @@ if uploaded_file:
                                 if df_agent_lookup[col].dtype == 'object':
                                     df_agent_lookup[col] = df_agent_lookup[col].astype(str).str.strip()
                             
+                            # Merge preserving index
                             temp_agent = df_source[["AGENT_CODE"]].copy()
                             temp_agent["AGENT_CODE"] = temp_agent["AGENT_CODE"].fillna("").astype(str).str.strip()
-                            
-                            merged_agent = pd.merge(temp_agent, df_agent_lookup, on="AGENT_CODE", how="left")
+                            merged_agent = temp_agent.merge(df_agent_lookup, on="AGENT_CODE", how="left")
                             
                             if "AGENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
-                                df_target["AGENT_NAME"] = merged_agent["AGENT_NAME"]
+                                df_target["AGENT_NAME"] = merged_agent["AGENT_NAME"].values
                             if "CLIENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
-                                df_target["CLIENT_NAME"] = merged_agent["AGENT_NAME"]
+                                df_target["CLIENT_NAME"] = merged_agent["AGENT_NAME"].values
                             if "AGENT_CODE" in df_target.columns and "AGENT_CODE" in merged_agent.columns:
-                                df_target["AGENT_CODE"] = merged_agent["AGENT_CODE"]
+                                df_target["AGENT_CODE"] = merged_agent["AGENT_CODE"].values
                             
                             st.info("✅ AGENT_NAME successfully mapped from AGENT sheet using AGENT_CODE lookup.")
                         except ValueError:
@@ -415,28 +413,18 @@ if uploaded_file:
                             if df_lookup[col].dtype == 'object':
                                 df_lookup[col] = df_lookup[col].astype(str).str.strip()
 
-                        # Prepare source placement values
-                        temp_source = df_source[["PLACEMENT"]].copy()
-                        temp_source["PLACEMENT"] = temp_source["PLACEMENT"].fillna("").astype(str).str.strip()
+                        # Prepare source placement column (keep index)
+                        source_placement = df_source[["PLACEMENT"]].copy()
+                        source_placement["PLACEMENT"] = source_placement["PLACEMENT"].fillna("").astype(str).str.strip()
 
-                        # Debug: show sample values
-                        with st.expander("🔍 Placement Lookup Debug Info", expanded=False):
-                            st.write("**Sample PLACEMENT values from source (first 5 unique):**", temp_source["PLACEMENT"].unique()[:5])
-                            st.write("**Sample PLACEMENT values from lookup (first 5 unique):**", df_lookup["PLACEMENT"].unique()[:5])
-
-                        # Merge
-                        merged_lookup = pd.merge(temp_source, df_lookup, on="PLACEMENT", how="left")
+                        # Merge directly with df_source to preserve index
+                        merged_lookup = source_placement.merge(df_lookup, on="PLACEMENT", how="left")
 
                         # Count matches
                         matched_count = merged_lookup["MAIN_OFFICE_ADDRESS"].notna().sum()
                         st.info(f"🔍 PLACEMENT lookup: {matched_count} out of {len(df_source)} rows matched.")
-
                         if matched_count == 0:
-                            st.warning("⚠️ No matches found. Check that your PLACEMENT values exactly match those in the lookup file (case and spaces matter).")
-                            # Show a sample of mismatched values
-                            unmatched = temp_source[~temp_source["PLACEMENT"].isin(df_lookup["PLACEMENT"])]["PLACEMENT"].unique()[:5]
-                            if len(unmatched) > 0:
-                                st.write("**Unmatched source PLACEMENT values (first 5):**", unmatched)
+                            st.warning("⚠️ No PLACEMENT matches. Check that your source PLACEMENT values exactly match those in the lookup file (case and spaces).")
 
                         # Map to target columns
                         placement_mappings = {
@@ -447,12 +435,7 @@ if uploaded_file:
                         }
                         for target_col, lookup_col in placement_mappings.items():
                             if target_col in df_target.columns and lookup_col in merged_lookup.columns:
-                                df_target[target_col] = merged_lookup[lookup_col]
-
-                        # Show a sample of the merged data
-                        with st.expander("📊 Sample merged data (first 5 rows)", expanded=False):
-                            sample_merge = merged_lookup.head(5)
-                            st.dataframe(sample_merge)
+                                df_target[target_col] = merged_lookup[lookup_col].values
 
                 # Fill empty cells
                 record_count = len(df_target)
