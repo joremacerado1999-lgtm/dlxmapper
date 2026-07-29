@@ -302,7 +302,7 @@ if uploaded_file:
 
             if target_columns:
                 mapping = {
-                    "DF_2926": ["OB/PRINCIPAL"],
+                    "DF_2926": ["OB/PRINCIPAL"],  # will be overridden conditionally later
                     "DF_3179": ["OB/PRINCIPAL"],
                     "DF_5633": ["SOA DATE"],
                     "LEADS_OB": ["OB/PRINCIPAL"],
@@ -342,13 +342,29 @@ if uploaded_file:
                             else:
                                 df_target["DL_TYPE"] = selected_template
 
-                # Additional column-specific formatting
-                if "DF_2926" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
-                    df_target["DF_2926"] = df_source["OB/PRINCIPAL"]
+                # =============================================================
+                # Additional column-specific formatting and overrides
+                # =============================================================
+
+                # ---- DF_2926: conditional source column ----
+                # For PIF HOME LOAN in Demand Letter mode, use "AMOUNT DUE" if present
+                if st.session_state.mode == "Demand Letter with Transmittal" and selected_client_name == "PIF HOME LOAN":
+                    df2926_col = "AMOUNT DUE" if "AMOUNT DUE" in df_source.columns else "OB/PRINCIPAL"
+                else:
+                    df2926_col = "OB/PRINCIPAL"
+
+                if "DF_2926" in df_target.columns and df2926_col in df_source.columns:
+                    df_target["DF_2926"] = df_source[df2926_col]
+
+                # ---- DF_3179 stays as OB/PRINCIPAL ----
                 if "DF_3179" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
                     df_target["DF_3179"] = df_source["OB/PRINCIPAL"]
+
+                # ---- LEADS_OB ----
                 if "LEADS_OB" in df_target.columns and "OB/PRINCIPAL" in df_source.columns:
                     df_target["LEADS_OB"] = df_source["OB/PRINCIPAL"]
+
+                # ---- LEADS_ACCTNO with cleaning ----
                 if "LEADS_ACCTNO" in df_target.columns and "ACCOUNT NUMBER" in df_source.columns:
                     if selected_client_name == "SBC HOME LOAN":
                         df_target["LEADS_ACCTNO"] = df_source["ACCOUNT NUMBER"]
@@ -356,11 +372,13 @@ if uploaded_file:
                         clean_acct = df_source["ACCOUNT NUMBER"].fillna("").astype(str).str.strip()
                         clean_acct = clean_acct.replace(r'\.0$', '', regex=True)
                         df_target["LEADS_ACCTNO"] = clean_acct
+
+                # ---- ADDRESS_TYPE ----
                 if "ADDRESS_TYPE" in df_target.columns and "ADD TYPE" in df_source.columns:
                     clean_addr = df_source["ADD TYPE"].fillna("").astype(str).str.strip()
                     df_target["ADDRESS_TYPE"] = clean_addr.str.replace(r'(?i)\s*ADDRESS\s*', '', regex=True).str.strip()
 
-                # Format numeric and date columns
+                # ---- Numeric and date formatting ----
                 if "DF_2926" in df_target.columns:
                     temp_num = pd.to_numeric(df_target["DF_2926"].astype(str).str.replace(',', '', regex=False), errors='coerce')
                     df_target["DF_2926"] = temp_num.apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "")
