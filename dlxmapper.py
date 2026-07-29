@@ -400,7 +400,15 @@ if uploaded_file:
                 # =============================================================
                 if st.session_state.mode == "Demand Letter with Transmittal" and selected_client_name == "PIF HOME LOAN" and required_lookup_name and lookup_exists:
                     # --- AGENT_NAME lookup via AGENT_CODE ---
-                    if "AGENT_CODE" in df_source.columns:
+                    # First, determine the actual column name used for AGENT_CODE in df_source
+                    agent_code_col = None
+                    for possible in ["AGENT CODE", "AGENT_CODE", "LEADS_AGENTCODE"]:
+                        if possible in df_source.columns:
+                            agent_code_col = possible
+                            break
+                    if agent_code_col is None:
+                        st.warning("⚠️ No AGENT_CODE column found in source file. Skipping AGENT_NAME lookup.")
+                    else:
                         try:
                             df_agent_lookup = pd.read_excel(lookup_filename, sheet_name="AGENT")
                             df_agent_lookup.columns = df_agent_lookup.columns.astype(str).str.strip().str.upper()
@@ -408,54 +416,87 @@ if uploaded_file:
                                 if df_agent_lookup[col].dtype == 'object':
                                     df_agent_lookup[col] = df_agent_lookup[col].astype(str).str.strip()
                             
-                            # Merge preserving index
-                            temp_agent = df_source[["AGENT_CODE"]].copy()
-                            temp_agent["AGENT_CODE"] = temp_agent["AGENT_CODE"].fillna("").astype(str).str.strip()
-                            merged_agent = temp_agent.merge(df_agent_lookup, on="AGENT_CODE", how="left")
+                            # Create cleaned keys for matching (upper case, stripped)
+                            df_agent_lookup["AGENT_CODE_CLEAN"] = df_agent_lookup["AGENT_CODE"].str.upper().str.strip()
                             
-                            if "AGENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
-                                df_target["AGENT_NAME"] = merged_agent["AGENT_NAME"].values
-                            if "CLIENT_NAME" in df_target.columns and "AGENT_NAME" in merged_agent.columns:
-                                df_target["CLIENT_NAME"] = merged_agent["AGENT_NAME"].values
-                            if "AGENT_CODE" in df_target.columns and "AGENT_CODE" in merged_agent.columns:
-                                df_target["AGENT_CODE"] = merged_agent["AGENT_CODE"].values
+                            # Prepare source AGENT_CODE cleaned
+                            temp_agent = df_source[[agent_code_col]].copy()
+                            temp_agent.columns = ["AGENT_CODE_RAW"]
+                            temp_agent["AGENT_CODE_CLEAN"] = temp_agent["AGENT_CODE_RAW"].fillna("").astype(str).str.upper().str.strip()
                             
-                            st.info("✅ AGENT_NAME successfully mapped from AGENT sheet using AGENT_CODE lookup.")
-                        except ValueError:
-                            st.warning("⚠️ AGENT sheet not found in reference file. Skipping AGENT_NAME lookup.")
+                            # Merge on cleaned key
+                            merged_agent = temp_agent.merge(
+                                df_agent_lookup[["AGENT_CODE_CLEAN", "AGENT_NAME"]],
+                                on="AGENT_CODE_CLEAN",
+                                how="left"
+                            )
+                            
+                            # Count matches
+                            match_count = merged_agent["AGENT_NAME"].notna().sum()
+                            st.info(f"🔍 AGENT_NAME lookup: {match_count} out of {len(df_source)} rows matched.")
+                            
+                            # Update AGENT_NAME in df_target: if lookup gives a name, use it; otherwise keep existing (if any)
+                            if "AGENT_NAME" in df_target.columns:
+                                # If we already have AGENT_NAME from source, we keep it where lookup fails
+                                # But we want to override only if lookup succeeded
+                                # So: take lookup value where not null, else original
+                                lookup_agent = merged_agent["AGENT_NAME"]
+                                original_agent = df_target["AGENT_NAME"] if "AGENT_NAME" in df_target.columns else pd.Series([""]*len(df_target))
+                                df_target["AGENT_NAME"] = lookup_agent.where(lookup_agent.notna(), original_agent)
+                            
+                            # Optionally also update CLIENT_NAME if needed (but we already set it to selected_client_name)
+                            # We'll leave CLIENT_NAME as is unless you want to override with AGENT_NAME?
+                            # The original code set CLIENT_NAME = AGENT_NAME from lookup, but that might be unintended.
+                            # We'll keep CLIENT_NAME as selected_client_name, as per earlier mapping.
+                            # If you want CLIENT_NAME to be the agent's name, uncomment:
+                            # if "CLIENT_NAME" in df_target.columns:
+                            #     df_target["CLIENT_NAME"] = lookup_agent.where(lookup_agent.notna(), df_target["CLIENT_NAME"])
+                            
+                            st.success("✅ AGENT_NAME lookup completed.")
+                        except Exception as e:
+                            st.warning(f"⚠️ AGENT sheet lookup failed: {e}")
                     
                     # --- PLACEMENT lookup for office details ---
                     if "PLACEMENT" in df_source.columns:
-                        # Read the "ALL" sheet (first sheet) which contains the placement mapping
-                        df_lookup = pd.read_excel(lookup_filename, sheet_name="ALL")
-                        df_lookup.columns = df_lookup.columns.astype(str).str.strip().str.upper()
-                        for col in df_lookup.columns:
-                            if df_lookup[col].dtype == 'object':
-                                df_lookup[col] = df_lookup[col].astype(str).str.strip()
-
-                        # Prepare source placement column (keep index)
-                        source_placement = df_source[["PLACEMENT"]].copy()
-                        source_placement["PLACEMENT"] = source_placement["PLACEMENT"].fillna("").astype(str).str.strip()
-
-                        # Merge directly with df_source to preserve index
-                        merged_lookup = source_placement.merge(df_lookup, on="PLACEMENT", how="left")
-
-                        # Count matches
-                        matched_count = merged_lookup["MAIN_OFFICE_ADDRESS"].notna().sum()
-                        st.info(f"🔍 PLACEMENT lookup: {matched_count} out of {len(df_source)} rows matched.")
-                        if matched_count == 0:
-                            st.warning("⚠️ No PLACEMENT matches. Check that your source PLACEMENT values exactly match those in the lookup file (case and spaces).")
-
-                        # Map to target columns
-                        placement_mappings = {
-                            "MAIN_OFFICE_ADDRESS": "MAIN_OFFICE_ADDRESS",
-                            "M_PHONE": "M_PHONE",
-                            "M_TEL": "M_TEL",
-                            "CLIENT_EMAIL": "CLIENT_EMAIL"
-                        }
-                        for target_col, lookup_col in placement_mappings.items():
-                            if target_col in df_target.columns and lookup_col in merged_lookup.columns:
-                                df_target[target_col] = merged_lookup[lookup_col].values
+                        try:
+                            df_lookup = pd.read_excel(lookup_filename, sheet_name="ALL")
+                            df_lookup.columns = df_lookup.columns.astype(str).str.strip().str.upper()
+                            for col in df_lookup.columns:
+                                if df_lookup[col].dtype == 'object':
+                                    df_lookup[col] = df_lookup[col].astype(str).str.strip()
+                            
+                            # Prepare source placement cleaned
+                            source_placement = df_source[["PLACEMENT"]].copy()
+                            source_placement.columns = ["PLACEMENT_RAW"]
+                            source_placement["PLACEMENT_CLEAN"] = source_placement["PLACEMENT_RAW"].fillna("").astype(str).str.upper().str.strip()
+                            
+                            # Prepare lookup placement cleaned
+                            df_lookup["PLACEMENT_CLEAN"] = df_lookup["PLACEMENT"].str.upper().str.strip()
+                            
+                            # Merge
+                            merged_lookup = source_placement.merge(
+                                df_lookup[["PLACEMENT_CLEAN", "MAIN_OFFICE_ADDRESS", "M_PHONE", "M_TEL", "CLIENT_EMAIL"]],
+                                on="PLACEMENT_CLEAN",
+                                how="left"
+                            )
+                            
+                            match_count = merged_lookup["MAIN_OFFICE_ADDRESS"].notna().sum()
+                            st.info(f"🔍 PLACEMENT lookup: {match_count} out of {len(df_source)} rows matched.")
+                            if match_count == 0:
+                                st.warning("⚠️ No PLACEMENT matches. Check that your source PLACEMENT values exactly match those in the lookup file (case and spaces).")
+                            
+                            # Map to target columns
+                            placement_mappings = {
+                                "MAIN_OFFICE_ADDRESS": "MAIN_OFFICE_ADDRESS",
+                                "M_PHONE": "M_PHONE",
+                                "M_TEL": "M_TEL",
+                                "CLIENT_EMAIL": "CLIENT_EMAIL"
+                            }
+                            for target_col, lookup_col in placement_mappings.items():
+                                if target_col in df_target.columns and lookup_col in merged_lookup.columns:
+                                    df_target[target_col] = merged_lookup[lookup_col].values
+                        except Exception as e:
+                            st.warning(f"⚠️ PLACEMENT lookup failed: {e}")
 
                 # Fill empty cells
                 record_count = len(df_target)
