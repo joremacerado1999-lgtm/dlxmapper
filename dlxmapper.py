@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 import os
-import time
 
 st.set_page_config(
     page_title="DLX Mapper", 
@@ -141,7 +140,7 @@ if "dl_filter_counts" not in st.session_state:
 if "selected_dl_filter" not in st.session_state:
     st.session_state.selected_dl_filter = "All"
 
-# Progress bar placeholder
+# Progress bar and status placeholders
 progress_placeholder = st.empty()
 status_placeholder = st.empty()
 
@@ -164,7 +163,7 @@ if uploaded_file:
                 sheet_names = pd.ExcelFile(uploaded_file).sheet_names
                 uploaded_file.seek(0)
                 if "SUMMARY" in sheet_names:
-                    st.info("📊 Found 'SUMMARY' sheet. Using it for processing.")
+                    # No separate info box, just update status
                     df_source = pd.read_excel(uploaded_file, sheet_name="SUMMARY")
                 else:
                     df_temp = pd.read_excel(uploaded_file, header=None, nrows=15)
@@ -176,7 +175,6 @@ if uploaded_file:
                             break
                     uploaded_file.seek(0)
                     df_source = pd.read_excel(uploaded_file, header=header_row_index)
-                    st.info(f"**🛠️ Auto-Header Scanner:** Headers found at Row {header_row_index + 1}:\n\n`{', '.join(df_source.columns.tolist())}`")
             
             df_source.columns = df_source.columns.astype(str).str.strip().str.upper()
             progress_bar.progress(10)
@@ -228,9 +226,10 @@ if uploaded_file:
                     if len(df_source) == 0:
                         st.error(f"❌ No rows found for DL_TYPE = **{selected_filter}**. Please check your file or select a different type.")
                         st.stop()
-                    st.info(f"✅ Filtered to DL_TYPE = **{selected_filter}**. **{len(df_source)}** rows remaining.")
+                    # Progress update only – no separate info box
+                    status_placeholder.info(f"✅ Filtered to DL_TYPE = {selected_filter} – {len(df_source)} rows remaining")
                 else:
-                    st.info(f"📊 Processing all DL_TYPE values. Total rows: **{len(df_source)}**")
+                    status_placeholder.info(f"📊 Processing all DL_TYPE values – {len(df_source)} rows total")
             progress_bar.progress(20)
 
             # -------- 2. Mapping columns --------
@@ -342,11 +341,12 @@ if uploaded_file:
                             source_codes = df_source[agent_code_col].fillna("").astype(str).str.upper().str.strip()
                             lookup_names = source_codes.map(agent_map)
                             match_count = lookup_names.notna().sum()
-                            st.info(f"🔍 AGENT_NAME lookup: {match_count} out of {len(df_source)} rows matched.")
+
+                            # Update status with match count (no extra info box)
+                            status_placeholder.info(f"🔍 AGENT_NAME lookup: {match_count} of {len(df_source)} rows matched")
 
                             if "AGENT_NAME" in df_target.columns:
                                 df_target["AGENT_NAME"] = lookup_names.where(lookup_names.notna(), df_target["AGENT_NAME"])
-                            st.success("✅ AGENT_NAME lookup completed.")
                         except Exception as e:
                             st.warning(f"⚠️ AGENT sheet lookup failed: {e}")
                     else:
@@ -372,14 +372,14 @@ if uploaded_file:
                                     mapped_data[col] = source_placement.map(lookup_df[col])
 
                             match_count = mapped_data.get("MAIN_OFFICE_ADDRESS", pd.Series()).notna().sum() if "MAIN_OFFICE_ADDRESS" in mapped_data else 0
-                            st.info(f"🔍 PLACEMENT lookup: {match_count} out of {len(df_source)} rows matched.")
+                            status_placeholder.info(f"🔍 PLACEMENT lookup: {match_count} of {len(df_source)} rows matched")
                             if match_count == 0:
-                                st.warning("⚠️ No PLACEMENT matches. Check that your source PLACEMENT values exactly match those in the lookup file.")
+                                # Warning can remain as it's useful
+                                st.warning("⚠️ No PLACEMENT matches. Check your PLACEMENT values.")
 
                             for target_col, mapped_series in mapped_data.items():
                                 if target_col in df_target.columns:
                                     df_target[target_col] = mapped_series.where(mapped_series.notna(), df_target[target_col])
-                            st.success("✅ PLACEMENT lookup completed.")
                         except Exception as e:
                             st.warning(f"⚠️ PLACEMENT lookup failed: {e}")
 
@@ -419,7 +419,7 @@ if uploaded_file:
                 # -------- 5. Complete --------
                 progress_bar.progress(100)
                 status_placeholder.success("✅ Processing complete! Your file is ready for download.")
-                st.balloons()  # 🎉 celebration
+                st.balloons()
 
         except Exception as e:
             st.error(f"Execution Error Exception encountered during dataset processing: {e}")
