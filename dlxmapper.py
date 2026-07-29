@@ -153,10 +153,12 @@ template_exists = os.path.exists(template_filename)
 
 required_lookup_name = None
 if st.session_state.mode == "Demand Letter with Transmittal":
+    # Only PIF HOME LOAN uses the AGENT/PLACEMENT lookup.
+    # PIF FORECLOSURE is disabled until its reference file is ready.
     if selected_client_name == "PIF HOME LOAN":
         required_lookup_name = "pif FOR DLX.xlsx"
-    elif selected_client_name == "PIF FORECLOSURE":
-        required_lookup_name = "pif fcl FOR DLX.xlsx"
+    # elif selected_client_name == "PIF FORECLOSURE":
+    #     required_lookup_name = "pif fcl FOR DLX.xlsx"
 
 if required_lookup_name:
     lookup_filename = os.path.join(SCRIPT_DIR, required_lookup_name)
@@ -394,9 +396,9 @@ if uploaded_file:
                     df_target["LEADS_ENDO_DATE"] = pd.to_datetime(df_target["LEADS_ENDO_DATE"], errors='coerce').dt.strftime('%B %d, %Y').fillna("")
 
                 # =============================================================
-                # LOOKUP LOGIC (Demand Letter only, with reference file)
+                # LOOKUP LOGIC (ONLY FOR PIF HOME LOAN in Demand Letter mode)
                 # =============================================================
-                if st.session_state.mode == "Demand Letter with Transmittal" and required_lookup_name and lookup_exists:
+                if st.session_state.mode == "Demand Letter with Transmittal" and selected_client_name == "PIF HOME LOAN" and required_lookup_name and lookup_exists:
                     # --- AGENT_NAME lookup via AGENT_CODE ---
                     if "AGENT_CODE" in df_source.columns:
                         try:
