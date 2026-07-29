@@ -303,7 +303,7 @@ if uploaded_file:
                 # LOOKUP LOGIC (ONLY FOR PIF HOME LOAN)
                 # =============================================================
                 if st.session_state.mode == "Demand Letter with Transmittal" and selected_client_name == "PIF HOME LOAN" and required_lookup_name and lookup_exists:
-                    # --- Detect AGENT CODE column ---
+                    # --- AGENT_NAME lookup ---
                     agent_code_col = None
                     for possible in ["AGENT CODE", "AGENT_CODE", "LEADS_AGENTCODE"]:
                         if possible in df_source.columns:
@@ -318,41 +318,32 @@ if uploaded_file:
                             for col in df_agent_lookup.columns:
                                 if df_agent_lookup[col].dtype == 'object':
                                     df_agent_lookup[col] = df_agent_lookup[col].astype(str).str.strip()
-                            
-                            # Clean for merge
+
+                            # Build mapping: cleaned code -> AGENT_NAME
                             df_agent_lookup["AGENT_CODE_CLEAN"] = df_agent_lookup["AGENT_CODE"].str.upper().str.strip()
-                            temp_agent = df_source[[agent_code_col]].copy()
-                            temp_agent.columns = ["AGENT_CODE_RAW"]
-                            temp_agent["AGENT_CODE_CLEAN"] = temp_agent["AGENT_CODE_RAW"].fillna("").astype(str).str.upper().str.strip()
-                            
-                            merged_agent = temp_agent.merge(
-                                df_agent_lookup[["AGENT_CODE_CLEAN", "AGENT_NAME"]],
-                                on="AGENT_CODE_CLEAN",
-                                how="left"
-                            )
-                            
-                            match_count = merged_agent["AGENT_NAME"].notna().sum()
+                            agent_map = df_agent_lookup.set_index("AGENT_CODE_CLEAN")["AGENT_NAME"].to_dict()
+
+                            # Clean source codes
+                            source_codes = df_source[agent_code_col].fillna("").astype(str).str.upper().str.strip()
+                            lookup_names = source_codes.map(agent_map)  # preserves index
+
+                            match_count = lookup_names.notna().sum()
                             st.info(f"🔍 AGENT_NAME lookup: {match_count} out of {len(df_source)} rows matched.")
-                            
-                            # Show debug: unique codes from source vs lookup
+
                             with st.expander("🔎 Debug: AGENT_CODE matching"):
-                                st.write("**Unique AGENT_CODE values in your source file:**")
-                                st.write(temp_agent["AGENT_CODE_RAW"].unique())
-                                st.write("**Unique AGENT_CODE values in the AGENT sheet (first 50):**")
-                                st.write(df_agent_lookup["AGENT_CODE"].unique()[:50])
-                                st.write("**First 5 rows of merge result:**")
-                                st.dataframe(merged_agent.head(5))
-                            
-                            # Update AGENT_NAME in df_target
+                                st.write("**Sample of mapped names (first 5 rows):**")
+                                st.dataframe(pd.DataFrame({
+                                    "AGENT_CODE_RAW": df_source[agent_code_col].head(5),
+                                    "AGENT_NAME_FOUND": lookup_names.head(5)
+                                }))
+
                             if "AGENT_NAME" in df_target.columns:
-                                lookup_agent = merged_agent["AGENT_NAME"]
-                                original_agent = df_target["AGENT_NAME"].copy()
-                                df_target["AGENT_NAME"] = lookup_agent.where(lookup_agent.notna(), original_agent)
-                            
+                                df_target["AGENT_NAME"] = lookup_names.where(lookup_names.notna(), df_target["AGENT_NAME"])
+
                             st.success("✅ AGENT_NAME lookup completed.")
                         except Exception as e:
                             st.warning(f"⚠️ AGENT sheet lookup failed: {e}")
-                    
+
                     # --- PLACEMENT lookup ---
                     if "PLACEMENT" in df_source.columns:
                         try:
@@ -361,32 +352,33 @@ if uploaded_file:
                             for col in df_lookup.columns:
                                 if df_lookup[col].dtype == 'object':
                                     df_lookup[col] = df_lookup[col].astype(str).str.strip()
-                            
-                            source_placement = df_source[["PLACEMENT"]].copy()
-                            source_placement.columns = ["PLACEMENT_RAW"]
-                            source_placement["PLACEMENT_CLEAN"] = source_placement["PLACEMENT_RAW"].fillna("").astype(str).str.upper().str.strip()
+
+                            # Build mapping for each column
                             df_lookup["PLACEMENT_CLEAN"] = df_lookup["PLACEMENT"].str.upper().str.strip()
-                            
-                            merged_lookup = source_placement.merge(
-                                df_lookup[["PLACEMENT_CLEAN", "MAIN_OFFICE_ADDRESS", "M_PHONE", "M_TEL", "CLIENT_EMAIL"]],
-                                on="PLACEMENT_CLEAN",
-                                how="left"
-                            )
-                            
-                            match_count = merged_lookup["MAIN_OFFICE_ADDRESS"].notna().sum()
+                            lookup_df = df_lookup.set_index("PLACEMENT_CLEAN")[["MAIN_OFFICE_ADDRESS", "M_PHONE", "M_TEL", "CLIENT_EMAIL"]]
+
+                            # Clean source placements
+                            source_placement = df_source["PLACEMENT"].fillna("").astype(str).str.upper().str.strip()
+
+                            # Map each column
+                            mapped_data = {}
+                            for col in ["MAIN_OFFICE_ADDRESS", "M_PHONE", "M_TEL", "CLIENT_EMAIL"]:
+                                if col in df_target.columns:
+                                    mapped_data[col] = source_placement.map(lookup_df[col])
+
+                            # Show match count (based on MAIN_OFFICE_ADDRESS)
+                            match_count = mapped_data.get("MAIN_OFFICE_ADDRESS", pd.Series()).notna().sum() if "MAIN_OFFICE_ADDRESS" in mapped_data else 0
                             st.info(f"🔍 PLACEMENT lookup: {match_count} out of {len(df_source)} rows matched.")
                             if match_count == 0:
                                 st.warning("⚠️ No PLACEMENT matches. Check that your source PLACEMENT values exactly match those in the lookup file (case and spaces).")
-                            
-                            placement_mappings = {
-                                "MAIN_OFFICE_ADDRESS": "MAIN_OFFICE_ADDRESS",
-                                "M_PHONE": "M_PHONE",
-                                "M_TEL": "M_TEL",
-                                "CLIENT_EMAIL": "CLIENT_EMAIL"
-                            }
-                            for target_col, lookup_col in placement_mappings.items():
-                                if target_col in df_target.columns and lookup_col in merged_lookup.columns:
-                                    df_target[target_col] = merged_lookup[lookup_col].values
+
+                            # Assign to df_target
+                            for target_col, mapped_series in mapped_data.items():
+                                if target_col in df_target.columns:
+                                    # Keep original if mapping fails
+                                    df_target[target_col] = mapped_series.where(mapped_series.notna(), df_target[target_col])
+
+                            st.success("✅ PLACEMENT lookup completed.")
                         except Exception as e:
                             st.warning(f"⚠️ PLACEMENT lookup failed: {e}")
 
