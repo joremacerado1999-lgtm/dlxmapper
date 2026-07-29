@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import os
+import time
 
 st.set_page_config(
     page_title="DLX Mapper", 
@@ -140,11 +141,19 @@ if "dl_filter_counts" not in st.session_state:
 if "selected_dl_filter" not in st.session_state:
     st.session_state.selected_dl_filter = "All"
 
+# Progress bar placeholder
+progress_placeholder = st.empty()
+status_placeholder = st.empty()
+
 if uploaded_file:
     if not template_exists:
         st.error("🛑 Processing halted: The requested template layout parameters could not be validated because the file is missing from local path layout directories.")
     else:
         try:
+            # -------- 0. Reading file --------
+            status_placeholder.info("📂 Reading source file...")
+            progress_bar = progress_placeholder.progress(0)
+
             if uploaded_file.name.endswith('.csv'):
                 try:
                     df_source = pd.read_csv(uploaded_file)
@@ -170,8 +179,10 @@ if uploaded_file:
                     st.info(f"**🛠️ Auto-Header Scanner:** Headers found at Row {header_row_index + 1}:\n\n`{', '.join(df_source.columns.tolist())}`")
             
             df_source.columns = df_source.columns.astype(str).str.strip().str.upper()
-            
-            # Detect DL_TYPE column
+            progress_bar.progress(10)
+
+            # -------- 1. Detect DL_TYPE and filter --------
+            status_placeholder.info("🔍 Detecting DL_TYPE column...")
             source_dl_col = None
             for possible in ["DL_TYPE", "DL TYPE", "DL-TYPE"]:
                 if possible in df_source.columns:
@@ -220,9 +231,13 @@ if uploaded_file:
                     st.info(f"✅ Filtered to DL_TYPE = **{selected_filter}**. **{len(df_source)}** rows remaining.")
                 else:
                     st.info(f"📊 Processing all DL_TYPE values. Total rows: **{len(df_source)}**")
-            
+            progress_bar.progress(20)
+
+            # -------- 2. Mapping columns --------
+            status_placeholder.info("📐 Mapping columns...")
             df_template_structure = pd.read_excel(template_filename, nrows=0)
             target_columns = [str(col).strip() for col in df_template_structure.columns.tolist()]
+            progress_bar.progress(30)
 
             if target_columns:
                 mapping = {
@@ -266,6 +281,8 @@ if uploaded_file:
                             else:
                                 df_target["DL_TYPE"] = selected_template
 
+                progress_bar.progress(50)
+
                 # ---- DF_2926 conditional ----
                 if st.session_state.mode == "Demand Letter with Transmittal" and selected_client_name == "PIF HOME LOAN":
                     df2926_col = "AMOUNT DUE" if "AMOUNT DUE" in df_source.columns else "OB/PRINCIPAL"
@@ -299,19 +316,19 @@ if uploaded_file:
                 if "LEADS_ENDO_DATE" in df_target.columns:
                     df_target["LEADS_ENDO_DATE"] = pd.to_datetime(df_target["LEADS_ENDO_DATE"], errors='coerce').dt.strftime('%B %d, %Y').fillna("")
 
-                # =============================================================
-                # LOOKUP LOGIC (ONLY FOR PIF HOME LOAN)
-                # =============================================================
+                progress_bar.progress(60)
+
+                # -------- 3. Lookups (if applicable) --------
                 if st.session_state.mode == "Demand Letter with Transmittal" and selected_client_name == "PIF HOME LOAN" and required_lookup_name and lookup_exists:
-                    # --- AGENT_NAME lookup ---
+                    status_placeholder.info("🔎 Performing AGENT_NAME and PLACEMENT lookups...")
+                    
+                    # AGENT_NAME lookup
                     agent_code_col = None
                     for possible in ["AGENT CODE", "AGENT_CODE", "LEADS_AGENTCODE"]:
                         if possible in df_source.columns:
                             agent_code_col = possible
                             break
-                    if agent_code_col is None:
-                        st.warning("⚠️ No AGENT_CODE column found in source file. Skipping AGENT_NAME lookup.")
-                    else:
+                    if agent_code_col is not None:
                         try:
                             df_agent_lookup = pd.read_excel(lookup_filename, sheet_name="AGENT")
                             df_agent_lookup.columns = df_agent_lookup.columns.astype(str).str.strip().str.upper()
@@ -319,32 +336,23 @@ if uploaded_file:
                                 if df_agent_lookup[col].dtype == 'object':
                                     df_agent_lookup[col] = df_agent_lookup[col].astype(str).str.strip()
 
-                            # Build mapping: cleaned code -> AGENT_NAME
                             df_agent_lookup["AGENT_CODE_CLEAN"] = df_agent_lookup["AGENT_CODE"].str.upper().str.strip()
                             agent_map = df_agent_lookup.set_index("AGENT_CODE_CLEAN")["AGENT_NAME"].to_dict()
 
-                            # Clean source codes
                             source_codes = df_source[agent_code_col].fillna("").astype(str).str.upper().str.strip()
-                            lookup_names = source_codes.map(agent_map)  # preserves index
-
+                            lookup_names = source_codes.map(agent_map)
                             match_count = lookup_names.notna().sum()
                             st.info(f"🔍 AGENT_NAME lookup: {match_count} out of {len(df_source)} rows matched.")
 
-                            with st.expander("🔎 Debug: AGENT_CODE matching"):
-                                st.write("**Sample of mapped names (first 5 rows):**")
-                                st.dataframe(pd.DataFrame({
-                                    "AGENT_CODE_RAW": df_source[agent_code_col].head(5),
-                                    "AGENT_NAME_FOUND": lookup_names.head(5)
-                                }))
-
                             if "AGENT_NAME" in df_target.columns:
                                 df_target["AGENT_NAME"] = lookup_names.where(lookup_names.notna(), df_target["AGENT_NAME"])
-
                             st.success("✅ AGENT_NAME lookup completed.")
                         except Exception as e:
                             st.warning(f"⚠️ AGENT sheet lookup failed: {e}")
+                    else:
+                        st.warning("⚠️ No AGENT_CODE column found. Skipping AGENT_NAME lookup.")
 
-                    # --- PLACEMENT lookup ---
+                    # PLACEMENT lookup
                     if "PLACEMENT" in df_source.columns:
                         try:
                             df_lookup = pd.read_excel(lookup_filename, sheet_name="ALL")
@@ -353,38 +361,35 @@ if uploaded_file:
                                 if df_lookup[col].dtype == 'object':
                                     df_lookup[col] = df_lookup[col].astype(str).str.strip()
 
-                            # Build mapping for each column
                             df_lookup["PLACEMENT_CLEAN"] = df_lookup["PLACEMENT"].str.upper().str.strip()
                             lookup_df = df_lookup.set_index("PLACEMENT_CLEAN")[["MAIN_OFFICE_ADDRESS", "M_PHONE", "M_TEL", "CLIENT_EMAIL"]]
 
-                            # Clean source placements
                             source_placement = df_source["PLACEMENT"].fillna("").astype(str).str.upper().str.strip()
 
-                            # Map each column
                             mapped_data = {}
                             for col in ["MAIN_OFFICE_ADDRESS", "M_PHONE", "M_TEL", "CLIENT_EMAIL"]:
                                 if col in df_target.columns:
                                     mapped_data[col] = source_placement.map(lookup_df[col])
 
-                            # Show match count (based on MAIN_OFFICE_ADDRESS)
                             match_count = mapped_data.get("MAIN_OFFICE_ADDRESS", pd.Series()).notna().sum() if "MAIN_OFFICE_ADDRESS" in mapped_data else 0
                             st.info(f"🔍 PLACEMENT lookup: {match_count} out of {len(df_source)} rows matched.")
                             if match_count == 0:
-                                st.warning("⚠️ No PLACEMENT matches. Check that your source PLACEMENT values exactly match those in the lookup file (case and spaces).")
+                                st.warning("⚠️ No PLACEMENT matches. Check that your source PLACEMENT values exactly match those in the lookup file.")
 
-                            # Assign to df_target
                             for target_col, mapped_series in mapped_data.items():
                                 if target_col in df_target.columns:
-                                    # Keep original if mapping fails
                                     df_target[target_col] = mapped_series.where(mapped_series.notna(), df_target[target_col])
-
                             st.success("✅ PLACEMENT lookup completed.")
                         except Exception as e:
                             st.warning(f"⚠️ PLACEMENT lookup failed: {e}")
 
-                # Fill empty cells
+                progress_bar.progress(80)
+
+                # -------- 4. Finalise output --------
+                status_placeholder.info("📦 Preparing output...")
                 record_count = len(df_target)
                 df_target = df_target.fillna("")
+                progress_bar.progress(90)
 
                 st.subheader("📋 Preview Table")
                 m1, m2, m3 = st.columns(3)
@@ -410,5 +415,13 @@ if uploaded_file:
                         type="primary",
                         use_container_width=True
                     )
+
+                # -------- 5. Complete --------
+                progress_bar.progress(100)
+                status_placeholder.success("✅ Processing complete! Your file is ready for download.")
+                st.balloons()  # 🎉 celebration
+
         except Exception as e:
             st.error(f"Execution Error Exception encountered during dataset processing: {e}")
+            progress_placeholder.empty()
+            status_placeholder.empty()
